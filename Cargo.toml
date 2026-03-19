@@ -1,0 +1,8 @@
+﻿[package]
+name = "agx"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Cross-platform AI agent terminal multiplexer"
+
+[dependencies]
