@@ -178,6 +178,49 @@ mod tests {
     use super::{InputAction, KeyBinding, PrefixRouter};
 
     #[test]
+    fn parse_prefix_ctrl_a() {
+        let binding = KeyBinding::parse("Ctrl-a").unwrap();
+        assert_eq!(binding.modifiers, KeyModifiers::CONTROL);
+        assert_eq!(binding.code, KeyCode::Char('a'));
+    }
+
+    #[test]
+    fn parse_prefix_alt_shift() {
+        let binding = KeyBinding::parse("Alt-Shift-x").unwrap();
+        assert!(binding.modifiers.contains(KeyModifiers::ALT));
+        assert!(binding.modifiers.contains(KeyModifiers::SHIFT));
+        assert_eq!(binding.code, KeyCode::Char('x'));
+    }
+
+    #[test]
+    fn parse_prefix_empty_fails() {
+        assert!(KeyBinding::parse("").is_err());
+    }
+
+    #[test]
+    fn parse_prefix_invalid_modifier() {
+        assert!(KeyBinding::parse("Hyper-a").is_err());
+    }
+
+    #[test]
+    fn keybinding_matches_correct_key() {
+        let binding = KeyBinding::parse("Ctrl-a").unwrap();
+        assert!(binding.matches(key(KeyCode::Char('a'), KeyModifiers::CONTROL)));
+    }
+
+    #[test]
+    fn keybinding_rejects_wrong_modifier() {
+        let binding = KeyBinding::parse("Ctrl-a").unwrap();
+        assert!(!binding.matches(key(KeyCode::Char('a'), KeyModifiers::ALT)));
+    }
+
+    #[test]
+    fn keybinding_case_insensitive() {
+        let binding = KeyBinding::parse("Ctrl-a").unwrap();
+        assert!(binding.matches(key(KeyCode::Char('A'), KeyModifiers::CONTROL)));
+    }
+
+    #[test]
     fn normal_mode_forwards_key() {
         let binding = KeyBinding::parse("Ctrl-a").unwrap();
         let mut router = PrefixRouter::new(binding, Duration::from_secs(2));

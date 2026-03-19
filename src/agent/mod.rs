@@ -150,3 +150,160 @@ fn encode_key(key: KeyEvent) -> Vec<u8> {
         _ => Vec::new(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::{encode_key, PaneSpec};
+
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
+    #[test]
+    fn encode_char_a() {
+        assert_eq!(
+            encode_key(key(KeyCode::Char('a'), KeyModifiers::empty())),
+            b"a"
+        );
+    }
+
+    #[test]
+    fn encode_char_unicode() {
+        assert_eq!(
+            encode_key(key(KeyCode::Char('한'), KeyModifiers::empty())),
+            "한".as_bytes().to_vec()
+        );
+    }
+
+    #[test]
+    fn encode_ctrl_c() {
+        assert_eq!(
+            encode_key(key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            vec![0x03]
+        );
+    }
+
+    #[test]
+    fn encode_ctrl_a() {
+        assert_eq!(
+            encode_key(key(KeyCode::Char('a'), KeyModifiers::CONTROL)),
+            vec![0x01]
+        );
+    }
+
+    #[test]
+    fn encode_ctrl_z() {
+        assert_eq!(
+            encode_key(key(KeyCode::Char('z'), KeyModifiers::CONTROL)),
+            vec![0x1a]
+        );
+    }
+
+    #[test]
+    fn encode_enter() {
+        assert_eq!(
+            encode_key(key(KeyCode::Enter, KeyModifiers::empty())),
+            vec![b'\r']
+        );
+    }
+
+    #[test]
+    fn encode_backspace() {
+        assert_eq!(
+            encode_key(key(KeyCode::Backspace, KeyModifiers::empty())),
+            vec![0x7f]
+        );
+    }
+
+    #[test]
+    fn encode_tab_and_backtab() {
+        assert_eq!(
+            encode_key(key(KeyCode::Tab, KeyModifiers::empty())),
+            vec![b'\t']
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::BackTab, KeyModifiers::empty())),
+            b"\x1b[Z"
+        );
+    }
+
+    #[test]
+    fn encode_escape() {
+        assert_eq!(
+            encode_key(key(KeyCode::Esc, KeyModifiers::empty())),
+            vec![0x1b]
+        );
+    }
+
+    #[test]
+    fn encode_arrow_keys() {
+        assert_eq!(
+            encode_key(key(KeyCode::Up, KeyModifiers::empty())),
+            b"\x1b[A"
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Down, KeyModifiers::empty())),
+            b"\x1b[B"
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Right, KeyModifiers::empty())),
+            b"\x1b[C"
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Left, KeyModifiers::empty())),
+            b"\x1b[D"
+        );
+    }
+
+    #[test]
+    fn encode_home_end() {
+        assert_eq!(
+            encode_key(key(KeyCode::Home, KeyModifiers::empty())),
+            b"\x1b[H"
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::End, KeyModifiers::empty())),
+            b"\x1b[F"
+        );
+    }
+
+    #[test]
+    fn encode_delete_insert() {
+        assert_eq!(
+            encode_key(key(KeyCode::Delete, KeyModifiers::empty())),
+            b"\x1b[3~"
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Insert, KeyModifiers::empty())),
+            b"\x1b[2~"
+        );
+    }
+
+    #[test]
+    fn encode_page_up_down() {
+        assert_eq!(
+            encode_key(key(KeyCode::PageUp, KeyModifiers::empty())),
+            b"\x1b[5~"
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::PageDown, KeyModifiers::empty())),
+            b"\x1b[6~"
+        );
+    }
+
+    #[test]
+    fn encode_unknown_returns_empty() {
+        assert!(encode_key(key(KeyCode::F(12), KeyModifiers::empty())).is_empty());
+    }
+
+    #[test]
+    fn pane_spec_new_defaults() {
+        let spec = PaneSpec::new("test".to_string(), "echo".to_string());
+        assert_eq!(spec.label, "test");
+        assert_eq!(spec.command, "echo");
+        assert!(spec.detect_idle.is_none());
+        assert!(spec.accent_color.is_none());
+    }
+}

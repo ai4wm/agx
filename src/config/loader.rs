@@ -182,6 +182,7 @@ fn parse_color(value: &str) -> Result<Color> {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::style::Color;
 
     use super::Config;
     use crate::SplitDirection;
@@ -231,5 +232,85 @@ color = "green"
     #[test]
     fn malformed_toml_returns_error() {
         assert!(Config::load_from_str("[[[broken").is_err());
+    }
+
+    #[test]
+    fn parse_color_named() {
+        assert_eq!(super::parse_color("cyan").unwrap(), Color::Cyan);
+        assert_eq!(super::parse_color("Red").unwrap(), Color::Red);
+        assert_eq!(super::parse_color("BLUE").unwrap(), Color::Blue);
+    }
+
+    #[test]
+    fn parse_color_hex() {
+        assert_eq!(
+            super::parse_color("#ff00aa").unwrap(),
+            Color::Rgb(255, 0, 170)
+        );
+        assert_eq!(super::parse_color("#000000").unwrap(), Color::Rgb(0, 0, 0));
+    }
+
+    #[test]
+    fn parse_color_invalid() {
+        assert!(super::parse_color("rainbow").is_err());
+        assert!(super::parse_color("#zzzzzz").is_err());
+        assert!(super::parse_color("#fff").is_err());
+    }
+
+    #[test]
+    fn resolve_pane_spec_registered_agent() {
+        let config = Config::load_from_str(
+            r#"
+[[agent]]
+name = "claude"
+command = "claude-code"
+detect_idle = ""
+color = "cyan"
+"#,
+        )
+        .unwrap();
+
+        let spec = config.resolve_pane_spec("claude").unwrap();
+        assert_eq!(spec.label, "claude");
+        assert_eq!(spec.command, "claude-code");
+        assert_eq!(spec.detect_idle, None);
+        assert_eq!(spec.accent_color, Some(Color::Cyan));
+    }
+
+    #[test]
+    fn resolve_pane_spec_raw_command() {
+        let config = Config::default();
+        let spec = config.resolve_pane_spec("my-tool").unwrap();
+        assert_eq!(spec.label, "my-tool");
+        assert_eq!(spec.command, "my-tool");
+        assert!(spec.detect_idle.is_none());
+        assert!(spec.accent_color.is_none());
+    }
+
+    #[test]
+    fn default_split_invalid() {
+        let config = Config::load_from_str(
+            r#"
+[defaults]
+split = "diagonal"
+"#,
+        )
+        .unwrap();
+
+        assert!(config.default_split().is_err());
+    }
+
+    #[test]
+    fn normalize_pattern_trims() {
+        assert_eq!(
+            super::normalize_pattern(Some("  ready  ".to_string())),
+            Some("ready".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_pattern_empty_is_none() {
+        assert_eq!(super::normalize_pattern(Some("   ".to_string())), None);
+        assert_eq!(super::normalize_pattern(None), None);
     }
 }

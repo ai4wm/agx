@@ -69,3 +69,58 @@ impl Workspace {
         self.panes.is_empty()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Workspace;
+    use crate::SplitDirection;
+
+    fn dummy_workspace() -> Workspace {
+        Workspace::with_panes("test", SplitDirection::Vertical, Vec::new())
+    }
+
+    #[test]
+    fn focus_prev_at_zero_stays() {
+        let mut ws = dummy_workspace();
+        ws.focused = 0;
+        ws.focus_prev();
+        assert_eq!(ws.focused, 0);
+    }
+
+    #[test]
+    fn focus_prev_decrements() {
+        let mut ws = dummy_workspace();
+        ws.focused = 2;
+        ws.focus_prev();
+        assert_eq!(ws.focused, 1);
+    }
+
+    #[test]
+    fn focus_next_at_end_stays() {
+        let mut ws = dummy_workspace();
+        ws.focused = 0;
+        ws.focus_next();
+        assert_eq!(ws.focused, 0);
+    }
+
+    #[test]
+    fn close_on_empty_is_noop() {
+        let mut ws = dummy_workspace();
+        ws.close_focused_pane();
+        assert!(ws.is_empty());
+        assert_eq!(ws.focused, 0);
+    }
+
+    #[test]
+    fn empty_workspace() {
+        let ws = dummy_workspace();
+        assert!(ws.is_empty());
+    }
+
+    #[test]
+    fn workspace_name() {
+        let ws = Workspace::with_panes("my-ws", SplitDirection::Horizontal, Vec::new());
+        assert_eq!(ws.name, "my-ws");
+        assert_eq!(ws.split, SplitDirection::Horizontal);
+    }
+}

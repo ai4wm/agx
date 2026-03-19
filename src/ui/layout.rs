@@ -72,4 +72,54 @@ mod tests {
         assert_eq!(layout.pane_areas[0].width, 120);
         assert_eq!(layout.pane_areas[0].height, 39);
     }
+
+    #[test]
+    fn layout_zero_panes() {
+        let layout = compute_layout(Rect::new(0, 0, 120, 40), 0, SplitDirection::Vertical);
+        assert!(layout.pane_areas.is_empty());
+        assert!(layout.pane_inners.is_empty());
+        assert_eq!(layout.status_area.height, 1);
+        assert_eq!(layout.status_area.width, 120);
+    }
+
+    #[test]
+    fn layout_two_panes_horizontal_split() {
+        let layout = compute_layout(Rect::new(0, 0, 120, 40), 2, SplitDirection::Horizontal);
+        assert_eq!(layout.pane_areas.len(), 2);
+        assert_eq!(layout.pane_areas[0].width, 120);
+        assert_eq!(layout.pane_areas[1].width, 120);
+    }
+
+    #[test]
+    fn layout_three_panes_even_split() {
+        let layout = compute_layout(Rect::new(0, 0, 120, 40), 3, SplitDirection::Vertical);
+        assert_eq!(layout.pane_areas[0].width, 40);
+        assert_eq!(layout.pane_areas[1].width, 40);
+        assert_eq!(layout.pane_areas[2].width, 40);
+    }
+
+    #[test]
+    fn layout_inners_smaller_than_areas() {
+        let layout = compute_layout(Rect::new(0, 0, 120, 40), 1, SplitDirection::Vertical);
+        assert_eq!(
+            layout.pane_inners[0].width,
+            layout.pane_areas[0].width.saturating_sub(2)
+        );
+        assert_eq!(
+            layout.pane_inners[0].height,
+            layout.pane_areas[0].height.saturating_sub(2)
+        );
+    }
+
+    #[test]
+    fn layout_status_bar_always_one_row() {
+        for pane_count in 0..5 {
+            let layout = compute_layout(
+                Rect::new(0, 0, 80, 24),
+                pane_count,
+                SplitDirection::Vertical,
+            );
+            assert_eq!(layout.status_area.height, 1);
+        }
+    }
 }

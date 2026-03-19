@@ -176,3 +176,31 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) 
     let bar = Paragraph::new(Line::from(spans)).style(Style::default().bg(Color::Black));
     frame.render_widget(bar, area);
 }
+
+#[cfg(test)]
+mod tests {
+    use ratatui::style::Color;
+
+    use super::vt100_color_to_ratatui;
+
+    #[test]
+    fn color_default() {
+        assert_eq!(vt100_color_to_ratatui(vt100::Color::Default), Color::Reset);
+    }
+
+    #[test]
+    fn color_indexed() {
+        assert_eq!(
+            vt100_color_to_ratatui(vt100::Color::Idx(196)),
+            Color::Indexed(196)
+        );
+    }
+
+    #[test]
+    fn color_rgb() {
+        assert_eq!(
+            vt100_color_to_ratatui(vt100::Color::Rgb(10, 20, 30)),
+            Color::Rgb(10, 20, 30)
+        );
+    }
+}
