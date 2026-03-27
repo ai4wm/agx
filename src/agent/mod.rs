@@ -10,6 +10,8 @@ use ratatui::style::Color;
 use crate::agent::detector::{detect_state, AgentState};
 use crate::agent::process::{AgentProcess, DEFAULT_PTY_SIZE};
 
+const PARSER_SCROLLBACK_LEN: usize = 1_000;
+
 #[derive(Clone, Debug)]
 pub struct PaneSpec {
     pub label: String,
@@ -56,7 +58,7 @@ impl AgentPane {
 
         Ok(Self {
             label: spec.label,
-            parser: vt100::Parser::new(DEFAULT_PTY_SIZE.rows, DEFAULT_PTY_SIZE.cols, 1_000),
+            parser: new_parser(DEFAULT_PTY_SIZE.rows, DEFAULT_PTY_SIZE.cols),
             accent_color: spec.accent_color,
             state: AgentState::Working,
             process,
@@ -93,6 +95,10 @@ impl AgentPane {
             return;
         }
 
+        if self.parser.screen().size() == (rows, cols) {
+            return;
+        }
+
         let size = PtySize {
             rows,
             cols,
@@ -101,7 +107,7 @@ impl AgentPane {
         };
 
         let _ = self.process.resize(size);
-        self.parser.set_size(rows, cols);
+        self.parser = resized_parser(&self.parser, rows, cols);
     }
 
     pub fn is_dead(&self) -> bool {
@@ -117,6 +123,65 @@ impl Drop for AgentPane {
     fn drop(&mut self) {
         let _ = self.process.kill();
     }
+}
+
+fn new_parser(rows: u16, cols: u16) -> vt100::Parser {
+    vt100::Parser::new(rows, cols, PARSER_SCROLLBACK_LEN)
+}
+
+fn resized_parser(parser: &vt100::Parser, rows: u16, cols: u16) -> vt100::Parser {
+    let screen = parser.screen();
+    let mut resized = new_parser(rows, cols);
+    let source_rows = rows.min(screen.size().0);
+
+    for row in 0..source_rows {
+        let line = plain_row_contents(screen, row, cols);
+        let cursor = format!("\x1b[{};1H", row + 1);
+        resized.process(cursor.as_bytes());
+        resized.process(line.as_bytes());
+    }
+
+    let (cursor_row, cursor_col) = screen.cursor_position();
+    let cursor = format!(
+        "\x1b[{};{}H",
+        cursor_row.min(rows.saturating_sub(1)) + 1,
+        cursor_col.min(cols.saturating_sub(1)) + 1
+    );
+    resized.process(cursor.as_bytes());
+
+    resized
+}
+
+fn plain_row_contents(screen: &vt100::Screen, row: u16, cols: u16) -> String {
+    let mut line = String::with_capacity(cols as usize);
+    let mut col = 0;
+
+    while col < cols {
+        let Some(cell) = screen.cell(row, col) else {
+            break;
+        };
+
+        if cell.is_wide_continuation() {
+            col += 1;
+            continue;
+        }
+
+        if cell.is_wide() && col + 1 >= cols {
+            line.push(' ');
+            break;
+        }
+
+        let contents = cell.contents();
+        if contents.is_empty() {
+            line.push(' ');
+        } else {
+            line.push_str(&contents);
+        }
+
+        col += if cell.is_wide() { 2 } else { 1 };
+    }
+
+    line
 }
 
 fn encode_key(key: KeyEvent) -> Vec<u8> {
@@ -155,7 +220,7 @@ fn encode_key(key: KeyEvent) -> Vec<u8> {
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use super::{encode_key, PaneSpec};
+    use super::{encode_key, new_parser, resized_parser, PaneSpec};
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
         KeyEvent::new(code, modifiers)
@@ -305,5 +370,17 @@ mod tests {
         assert_eq!(spec.command, "echo");
         assert!(spec.detect_idle.is_none());
         assert!(spec.accent_color.is_none());
+    }
+
+    #[test]
+    fn resize_rebuilds_parser_without_wide_char_boundary_panic() {
+        let mut parser = new_parser(1, 50);
+        let line = format!("{}한", "a".repeat(48));
+        parser.process(line.as_bytes());
+
+        let mut parser = resized_parser(&parser, 1, 49);
+        parser.process(b"\x1b[49G\x1b[K");
+
+        assert_eq!(parser.screen().size(), (1, 49));
     }
 }
