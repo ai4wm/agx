@@ -118,12 +118,15 @@ fn render_vt100_screen(frame: &mut Frame, parser: &vt100::Parser, area: ratatui:
     }
 
     let screen = parser.screen();
+    let (parser_rows, parser_cols) = screen.size();
+    let rows = area.height.min(parser_rows);
+    let cols = area.width.min(parser_cols);
     let mut lines = Vec::with_capacity(area.height as usize);
 
-    for row in 0..area.height {
+    for row in 0..rows {
         let mut spans = Vec::with_capacity(area.width as usize);
 
-        for col in 0..area.width {
+        for col in 0..cols {
             if let Some(cell) = screen.cell(row, col) {
                 let contents = cell.contents();
                 let text = if contents.is_empty() {
@@ -152,12 +155,18 @@ fn render_vt100_screen(frame: &mut Frame, parser: &vt100::Parser, area: ratatui:
                 }
 
                 spans.push(Span::styled(text, style));
-            } else {
-                spans.push(Span::raw(" "));
             }
         }
 
+        for _ in cols..area.width {
+            spans.push(Span::raw(" "));
+        }
+
         lines.push(Line::from(spans));
+    }
+
+    for _ in rows..area.height {
+        lines.push(Line::from(Span::raw(" ".repeat(area.width as usize))));
     }
 
     frame.render_widget(Paragraph::new(lines), area);
