@@ -1,6 +1,8 @@
 pub mod agent;
 pub mod app;
 pub mod config;
+pub mod pane;
+pub mod surface;
 pub mod terminal;
 pub mod ui;
 pub mod workspace;

@@ -1,4 +1,5 @@
 pub mod layout;
+pub mod sidebar;
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -6,16 +7,19 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::app::App;
+use crate::pane::Pane;
 use crate::ui::layout::LayoutState;
 use crate::workspace::Workspace;
 
 pub fn render(frame: &mut Frame, app: &App, layout: &LayoutState) {
-    let area = frame.area();
+    if let Some(sidebar_area) = layout.sidebar {
+        sidebar::render(frame, app, sidebar_area);
+    }
 
     if app.workspaces_empty() {
-        let empty = Paragraph::new("No workspaces. Press prefix then C to create one.")
+        let empty = Paragraph::new("No workspaces. Press Alt+C to create one.")
             .style(Style::default().fg(Color::Red));
-        frame.render_widget(empty, area);
+        frame.render_widget(empty, main_content_area(frame.area(), layout));
         render_status_bar(frame, app, layout.status_area);
         return;
     }
@@ -28,31 +32,84 @@ pub fn render(frame: &mut Frame, app: &App, layout: &LayoutState) {
 }
 
 fn render_workspace(frame: &mut Frame, workspace: &Workspace, layout: &LayoutState) {
-    for (index, pane) in workspace.panes.iter().enumerate() {
-        let is_focused = index == workspace.focused;
-        let focus_color = pane.accent_color.unwrap_or(Color::Cyan);
+    for (index, (pane, pane_layout)) in workspace
+        .panes
+        .iter()
+        .zip(layout.pane_layouts.iter())
+        .enumerate()
+    {
+        let is_focused = index == workspace.focused_pane;
+        let current_surface = pane.current_surface();
+        let focus_color = current_surface
+            .and_then(|surface| surface.agent.accent_color)
+            .unwrap_or(Color::Cyan);
         let border_color = if is_focused {
             focus_color
         } else {
             Color::DarkGray
         };
-        let status = if pane.is_dead() {
+        let status = if current_surface.is_some_and(|surface| surface.agent.is_dead()) {
             "dead"
-        } else if pane.is_idle() {
+        } else if current_surface.is_some_and(|surface| surface.agent.is_idle()) {
             "idle"
         } else {
             "live"
         };
-        let title = format!(" {} [{}] ", pane.label, status);
+        let title_label = current_surface
+            .map(|surface| surface.label.as_str())
+            .unwrap_or("empty");
+        let title = format!(" {} [{}] ", title_label, status);
 
         let block = Block::default()
             .title(title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color));
 
-        frame.render_widget(block, layout.pane_areas[index]);
-        render_vt100_screen(frame, &pane.parser, layout.pane_inners[index]);
+        frame.render_widget(block, pane_layout.outer);
+
+        if let Some(tabbar_area) = pane_layout.tabbar {
+            render_surface_tabbar(frame, pane, tabbar_area, focus_color);
+        }
+
+        if let Some(surface) = current_surface {
+            render_vt100_screen(frame, &surface.agent.parser, pane_layout.content);
+        }
     }
+}
+
+fn render_surface_tabbar(
+    frame: &mut Frame,
+    pane: &Pane,
+    area: ratatui::layout::Rect,
+    accent: Color,
+) {
+    let mut spans = Vec::new();
+
+    for (index, surface) in pane.surfaces.iter().enumerate() {
+        let style = if index == pane.current_surface {
+            Style::default()
+                .fg(Color::Black)
+                .bg(accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        spans.push(Span::styled(format!("[{}] ", surface.label), style));
+    }
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn main_content_area(
+    frame_area: ratatui::layout::Rect,
+    layout: &LayoutState,
+) -> ratatui::layout::Rect {
+    let sidebar_width = layout.sidebar.map_or(0, |sidebar| sidebar.width);
+    let main_x = frame_area.x.saturating_add(sidebar_width);
+    let main_width = frame_area.width.saturating_sub(sidebar_width);
+    let main_height = layout.status_area.y.saturating_sub(frame_area.y);
+
+    ratatui::layout::Rect::new(main_x, frame_area.y, main_width, main_height)
 }
 
 fn render_vt100_screen(frame: &mut Frame, parser: &vt100::Parser, area: ratatui::layout::Rect) {
@@ -126,50 +183,35 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) 
         Span::raw(" "),
     ];
 
-    if app.prefix_is_active() {
-        spans.push(Span::styled(
-            format!(" PREFIX:{} ", app.prefix_label()),
-            Style::default().fg(Color::Black).bg(Color::Green),
-        ));
-        spans.push(Span::raw(" "));
-    }
-
-    if app.confirm_close_pane {
-        spans.push(Span::styled(
-            " Close pane? [y/n] ",
-            Style::default().fg(Color::Black).bg(Color::Yellow),
-        ));
-        spans.push(Span::raw(" "));
-    }
-
-    for (index, workspace) in app.workspaces.iter().enumerate() {
-        let style = if index == app.current_workspace {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::White).bg(Color::DarkGray)
-        };
-
-        spans.push(Span::styled(
-            format!(" {}:{} ", index + 1, workspace.name),
-            style,
-        ));
-        spans.push(Span::raw(" "));
-    }
-
     if let Some(workspace) = app.current_workspace() {
+        spans.push(Span::styled(
+            format!(" ws:{} ", workspace.name),
+            Style::default().fg(Color::Black).bg(Color::Cyan),
+        ));
+        spans.push(Span::raw(" "));
+
         spans.push(Span::styled(
             format!(" panes:{} ", workspace.panes.len()),
             Style::default().fg(Color::Gray),
         ));
         spans.push(Span::raw(" "));
+
+        if let Some(pane) = workspace.focused_pane() {
+            let current_surface = if pane.surfaces.is_empty() {
+                0
+            } else {
+                pane.current_surface + 1
+            };
+            spans.push(Span::styled(
+                format!(" surf:{}/{} ", current_surface, pane.surfaces.len()),
+                Style::default().fg(Color::Gray),
+            ));
+            spans.push(Span::raw(" "));
+        }
     }
 
     spans.push(Span::styled(
-        format!(
-            " Prefix {} then Arrows/N/X/C/1-9/Q  timeout:{}s ",
-            app.prefix_label(),
-            app.prefix_timeout_seconds()
-        ),
+        " Alt+?:help Alt+D/S split Alt+T/W surface Alt+B sidebar Alt+Q quit ",
         Style::default().fg(Color::Gray),
     ));
 

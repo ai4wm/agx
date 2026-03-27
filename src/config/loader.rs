@@ -7,7 +7,6 @@ use serde::Deserialize;
 
 use crate::agent::registry::AgentDefinition;
 use crate::agent::PaneSpec;
-use crate::terminal::input::KeyBinding;
 use crate::SplitDirection;
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -20,11 +19,8 @@ pub struct Config {
     pub agent: Vec<AgentConfig>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-pub struct KeybindConfig {
-    #[serde(default = "default_prefix")]
-    pub prefix: String,
-}
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct KeybindConfig {}
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct DefaultsConfig {
@@ -72,10 +68,6 @@ impl Config {
         Ok(config)
     }
 
-    pub fn prefix_binding(&self) -> Result<KeyBinding> {
-        KeyBinding::parse(&self.keybind.prefix)
-    }
-
     pub fn default_split(&self) -> Result<SplitDirection> {
         match self.defaults.split.as_deref() {
             Some(value) => SplitDirection::from_config_value(value)
@@ -118,18 +110,6 @@ impl Config {
             })
             .collect()
     }
-}
-
-impl Default for KeybindConfig {
-    fn default() -> Self {
-        Self {
-            prefix: default_prefix(),
-        }
-    }
-}
-
-fn default_prefix() -> String {
-    "Ctrl-a".to_string()
 }
 
 fn default_shell() -> String {
@@ -181,7 +161,6 @@ fn parse_color(value: &str) -> Result<Color> {
 
 #[cfg(test)]
 mod tests {
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::style::Color;
 
     use super::Config;
@@ -191,9 +170,6 @@ mod tests {
     fn parse_valid_config() {
         let config = Config::load_from_str(
             r#"
-[keybind]
-prefix = "Ctrl-a"
-
 [defaults]
 shell = "powershell.exe"
 split = "horizontal"
@@ -215,10 +191,6 @@ color = "green"
 
         assert_eq!(config.agent.len(), 2);
         assert_eq!(config.default_split().unwrap(), SplitDirection::Horizontal);
-        assert!(config
-            .prefix_binding()
-            .unwrap()
-            .matches(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)));
     }
 
     #[test]
@@ -312,5 +284,21 @@ split = "diagonal"
     fn normalize_pattern_empty_is_none() {
         assert_eq!(super::normalize_pattern(Some("   ".to_string())), None);
         assert_eq!(super::normalize_pattern(None), None);
+    }
+
+    #[test]
+    fn legacy_keybind_section_is_ignored() {
+        let config = Config::load_from_str(
+            r#"
+[keybind]
+prefix = "Ctrl-a"
+
+[defaults]
+split = "vertical"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.default_split().unwrap(), SplitDirection::Vertical);
     }
 }

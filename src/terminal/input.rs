@@ -1,260 +1,149 @@
-use std::time::{Duration, Instant};
-
-use anyhow::{bail, Result};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct KeyBinding {
-    raw: String,
-    modifiers: KeyModifiers,
-    code: KeyCode,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PrefixCommand {
-    FocusPrev,
-    FocusNext,
-    NewPane,
-    ClosePane,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AppCommand {
+    SplitRight,
+    SplitDown,
+    NewSurface,
+    CloseSurface,
+    FocusLeft,
+    FocusRight,
+    FocusUp,
+    FocusDown,
+    PrevSurface,
+    NextSurface,
+    ToggleSidebar,
     NewWorkspace,
+    CloseWorkspace,
     SwitchWorkspace(usize),
+    CycleFocusForward,
+    CycleFocusBackward,
     Quit,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum InputAction {
-    ForwardToPty(KeyEvent),
-    EnterPrefixMode,
-    PrefixCommand(PrefixCommand),
-    PrefixTimedOut,
-    Noop,
-}
+pub fn command_for_key(key: KeyEvent) -> Option<AppCommand> {
+    if key.code == KeyCode::BackTab && !key.modifiers.contains(KeyModifiers::ALT) {
+        return Some(AppCommand::CycleFocusBackward);
+    }
 
-pub struct PrefixRouter {
-    binding: KeyBinding,
-    timeout: Duration,
-    prefix_started_at: Option<Instant>,
-}
-
-impl KeyBinding {
-    pub fn parse(value: &str) -> Result<Self> {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            bail!("prefix key cannot be empty");
+    // Tab / Shift+Tab: focus cycle without Alt.
+    if key.code == KeyCode::Tab && !key.modifiers.contains(KeyModifiers::ALT) {
+        if key.modifiers.contains(KeyModifiers::SHIFT) {
+            return Some(AppCommand::CycleFocusBackward);
         }
-
-        let tokens = trimmed
-            .split('-')
-            .map(|part| part.trim())
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>();
-        if tokens.is_empty() {
-            bail!("invalid prefix key `{trimmed}`");
-        }
-
-        let mut modifiers = KeyModifiers::empty();
-        for token in &tokens[..tokens.len().saturating_sub(1)] {
-            match token.to_ascii_lowercase().as_str() {
-                "ctrl" | "control" => modifiers |= KeyModifiers::CONTROL,
-                "alt" => modifiers |= KeyModifiers::ALT,
-                "shift" => modifiers |= KeyModifiers::SHIFT,
-                "super" | "cmd" | "command" | "meta" => modifiers |= KeyModifiers::SUPER,
-                other => bail!("unsupported modifier `{other}` in prefix key `{trimmed}`"),
-            }
-        }
-
-        let code = parse_key_code(tokens[tokens.len() - 1])?;
-        Ok(Self {
-            raw: trimmed.to_string(),
-            modifiers,
-            code,
-        })
+        return Some(AppCommand::CycleFocusForward);
     }
 
-    pub fn matches(&self, key: KeyEvent) -> bool {
-        if key.modifiers != self.modifiers {
-            return false;
-        }
-
-        match (self.code, key.code) {
-            (KeyCode::Char(expected), KeyCode::Char(actual)) => {
-                expected.eq_ignore_ascii_case(&actual)
-            }
-            _ => self.code == key.code,
-        }
+    if !key.modifiers.contains(KeyModifiers::ALT) {
+        return None;
     }
 
-    pub fn raw(&self) -> &str {
-        &self.raw
-    }
-}
-
-impl PrefixRouter {
-    pub fn new(binding: KeyBinding, timeout: Duration) -> Self {
-        Self {
-            binding,
-            timeout,
-            prefix_started_at: None,
-        }
-    }
-
-    pub fn route_key(&mut self, key: KeyEvent, now: Instant) -> InputAction {
-        let _ = self.expire(now);
-
-        if self.binding.matches(key) {
-            self.prefix_started_at = Some(now);
-            return InputAction::EnterPrefixMode;
-        }
-
-        if self.is_prefix_active() {
-            self.prefix_started_at = None;
-            return map_prefix_key(key);
-        }
-
-        InputAction::ForwardToPty(key)
-    }
-
-    pub fn expire(&mut self, now: Instant) -> Option<InputAction> {
-        if self
-            .prefix_started_at
-            .is_some_and(|started| now.duration_since(started) >= self.timeout)
-        {
-            self.prefix_started_at = None;
-            return Some(InputAction::PrefixTimedOut);
-        }
-
-        None
-    }
-
-    pub fn is_prefix_active(&self) -> bool {
-        self.prefix_started_at.is_some()
-    }
-
-    pub fn binding_label(&self) -> &str {
-        self.binding.raw()
-    }
-
-    pub fn timeout(&self) -> Duration {
-        self.timeout
-    }
-}
-
-fn parse_key_code(token: &str) -> Result<KeyCode> {
-    let lower = token.to_ascii_lowercase();
-    match lower.as_str() {
-        "enter" => Ok(KeyCode::Enter),
-        "esc" | "escape" => Ok(KeyCode::Esc),
-        "tab" => Ok(KeyCode::Tab),
-        "space" => Ok(KeyCode::Char(' ')),
-        other if other.chars().count() == 1 => Ok(KeyCode::Char(other.chars().next().unwrap())),
-        _ => bail!("unsupported key `{token}` in prefix binding"),
-    }
-}
-
-fn map_prefix_key(key: KeyEvent) -> InputAction {
     match key.code {
-        KeyCode::Left | KeyCode::Up => InputAction::PrefixCommand(PrefixCommand::FocusPrev),
-        KeyCode::Right | KeyCode::Down => InputAction::PrefixCommand(PrefixCommand::FocusNext),
-        KeyCode::Char(c) => match c.to_ascii_lowercase() {
-            'n' => InputAction::PrefixCommand(PrefixCommand::NewPane),
-            'x' => InputAction::PrefixCommand(PrefixCommand::ClosePane),
-            'c' => InputAction::PrefixCommand(PrefixCommand::NewWorkspace),
-            'q' => InputAction::PrefixCommand(PrefixCommand::Quit),
-            digit if ('1'..='9').contains(&digit) => InputAction::PrefixCommand(
-                PrefixCommand::SwitchWorkspace(digit as usize - '1' as usize),
-            ),
-            _ => InputAction::Noop,
-        },
-        _ => InputAction::Noop,
+        KeyCode::Left => Some(AppCommand::FocusLeft),
+        KeyCode::Right => Some(AppCommand::FocusRight),
+        KeyCode::Up => Some(AppCommand::FocusUp),
+        KeyCode::Down => Some(AppCommand::FocusDown),
+        KeyCode::Char('[') => Some(AppCommand::PrevSurface),
+        KeyCode::Char(']') => Some(AppCommand::NextSurface),
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'d') => Some(AppCommand::SplitRight),
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'s') => Some(AppCommand::SplitDown),
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'t') => Some(AppCommand::NewSurface),
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'w') => Some(AppCommand::CloseSurface),
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'c') => Some(AppCommand::NewWorkspace),
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'x') => Some(AppCommand::CloseWorkspace),
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'b') => Some(AppCommand::ToggleSidebar),
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'q') => Some(AppCommand::Quit),
+        KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+            Some(AppCommand::SwitchWorkspace(c as usize - '1' as usize))
+        }
+        _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
-
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use super::{InputAction, KeyBinding, PrefixRouter};
+    use super::{command_for_key, AppCommand};
 
     #[test]
-    fn parse_prefix_ctrl_a() {
-        let binding = KeyBinding::parse("Ctrl-a").unwrap();
-        assert_eq!(binding.modifiers, KeyModifiers::CONTROL);
-        assert_eq!(binding.code, KeyCode::Char('a'));
-    }
-
-    #[test]
-    fn parse_prefix_alt_shift() {
-        let binding = KeyBinding::parse("Alt-Shift-x").unwrap();
-        assert!(binding.modifiers.contains(KeyModifiers::ALT));
-        assert!(binding.modifiers.contains(KeyModifiers::SHIFT));
-        assert_eq!(binding.code, KeyCode::Char('x'));
-    }
-
-    #[test]
-    fn parse_prefix_empty_fails() {
-        assert!(KeyBinding::parse("").is_err());
-    }
-
-    #[test]
-    fn parse_prefix_invalid_modifier() {
-        assert!(KeyBinding::parse("Hyper-a").is_err());
-    }
-
-    #[test]
-    fn keybinding_matches_correct_key() {
-        let binding = KeyBinding::parse("Ctrl-a").unwrap();
-        assert!(binding.matches(key(KeyCode::Char('a'), KeyModifiers::CONTROL)));
-    }
-
-    #[test]
-    fn keybinding_rejects_wrong_modifier() {
-        let binding = KeyBinding::parse("Ctrl-a").unwrap();
-        assert!(!binding.matches(key(KeyCode::Char('a'), KeyModifiers::ALT)));
-    }
-
-    #[test]
-    fn keybinding_case_insensitive() {
-        let binding = KeyBinding::parse("Ctrl-a").unwrap();
-        assert!(binding.matches(key(KeyCode::Char('A'), KeyModifiers::CONTROL)));
-    }
-
-    #[test]
-    fn normal_mode_forwards_key() {
-        let binding = KeyBinding::parse("Ctrl-a").unwrap();
-        let mut router = PrefixRouter::new(binding, Duration::from_secs(2));
-        let action = router.route_key(
-            key(KeyCode::Char('z'), KeyModifiers::empty()),
-            Instant::now(),
+    fn tab_cycles_focus_forward() {
+        assert_eq!(
+            command_for_key(key(KeyCode::Tab, KeyModifiers::empty())),
+            Some(AppCommand::CycleFocusForward)
         );
-
-        assert!(matches!(action, InputAction::ForwardToPty(_)));
     }
 
     #[test]
-    fn prefix_mode_enter() {
-        let binding = KeyBinding::parse("Ctrl-a").unwrap();
-        let mut router = PrefixRouter::new(binding, Duration::from_secs(2));
-        let action = router.route_key(
-            key(KeyCode::Char('a'), KeyModifiers::CONTROL),
-            Instant::now(),
+    fn shift_tab_cycles_focus_backward() {
+        assert_eq!(
+            command_for_key(key(KeyCode::Tab, KeyModifiers::SHIFT)),
+            Some(AppCommand::CycleFocusBackward)
         );
-
-        assert_eq!(action, InputAction::EnterPrefixMode);
-        assert!(router.is_prefix_active());
     }
 
     #[test]
-    fn prefix_mode_timeout() {
-        let binding = KeyBinding::parse("Ctrl-a").unwrap();
-        let mut router = PrefixRouter::new(binding, Duration::from_secs(2));
-        let now = Instant::now();
-        let _ = router.route_key(key(KeyCode::Char('a'), KeyModifiers::CONTROL), now);
-        let timed_out = router.expire(now + Duration::from_secs(2));
+    fn backtab_cycles_focus_backward() {
+        assert_eq!(
+            command_for_key(key(KeyCode::BackTab, KeyModifiers::SHIFT)),
+            Some(AppCommand::CycleFocusBackward)
+        );
+    }
 
-        assert_eq!(timed_out, Some(InputAction::PrefixTimedOut));
-        assert!(!router.is_prefix_active());
+    #[test]
+    fn alt_letter_commands_are_case_insensitive() {
+        assert_eq!(
+            command_for_key(key(
+                KeyCode::Char('T'),
+                KeyModifiers::ALT | KeyModifiers::SHIFT
+            )),
+            Some(AppCommand::NewSurface)
+        );
+    }
+
+    #[test]
+    fn alt_arrows_map_to_focus_commands() {
+        assert_eq!(
+            command_for_key(key(KeyCode::Left, KeyModifiers::ALT)),
+            Some(AppCommand::FocusLeft)
+        );
+        assert_eq!(
+            command_for_key(key(KeyCode::Down, KeyModifiers::ALT)),
+            Some(AppCommand::FocusDown)
+        );
+    }
+
+    #[test]
+    fn alt_surface_navigation_commands() {
+        assert_eq!(
+            command_for_key(key(KeyCode::Char('['), KeyModifiers::ALT)),
+            Some(AppCommand::PrevSurface)
+        );
+        assert_eq!(
+            command_for_key(key(KeyCode::Char(']'), KeyModifiers::ALT)),
+            Some(AppCommand::NextSurface)
+        );
+    }
+
+    #[test]
+    fn alt_digit_switches_workspace() {
+        assert_eq!(
+            command_for_key(key(KeyCode::Char('3'), KeyModifiers::ALT)),
+            Some(AppCommand::SwitchWorkspace(2))
+        );
+    }
+
+    #[test]
+    fn non_alt_keys_are_ignored() {
+        assert_eq!(
+            command_for_key(key(KeyCode::Char('d'), KeyModifiers::empty())),
+            None
+        );
+    }
+
+    #[test]
+    fn unsupported_alt_keys_are_ignored() {
+        assert_eq!(command_for_key(key(KeyCode::F(5), KeyModifiers::ALT)), None);
     }
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
